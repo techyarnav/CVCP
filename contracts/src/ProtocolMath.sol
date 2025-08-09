@@ -116,6 +116,22 @@ library ProtocolMath {
     function calculateStakingScore(BehavioralMetrics memory metrics) 
         internal pure returns (uint256) {
         
+        // Early return if there is effectively no staking activity
+        if (
+            metrics.totalStakedUSD == 0 &&
+            metrics.stakingDurationDays == 0 &&
+            metrics.stakingPlatformCount == 0
+        ) {
+            uint256 smallBonus = 0;
+            if (metrics.stakingLoyaltyScore > 0) {
+                smallBonus += metrics.stakingLoyaltyScore / 20; // up to 5
+            }
+            if (metrics.interactionDepthScore > 0) {
+                smallBonus += metrics.interactionDepthScore / 50; // up to 2
+            }
+            return smallBonus;
+        }
+        
         uint256 amountScore = logarithmicScale(metrics.totalStakedUSD, 1000);
         uint256 durationScore = timeDecayFunction(metrics.stakingDurationDays);
         uint256 platformScore = linearScale(metrics.stakingPlatformCount, 6, 40);

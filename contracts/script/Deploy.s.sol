@@ -18,6 +18,7 @@ contract DeployScript is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
+        address dataProvider = vm.envAddress("DATA_PROVIDER_ADDRESS");
         
         // Get network configuration
         DeployConfig memory config = getNetworkConfig();
@@ -25,12 +26,17 @@ contract DeployScript is Script {
         console.log("=== CVCP Protocol Deployment ===");
         console.log("Network:", config.network);
         console.log("Deployer:", deployer);
-        console.log("Initial Data Provider:", config.initialDataProvider);
+        console.log("Data Provider:", dataProvider);
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Deploy CreditScoreRegistry
-        CreditScoreRegistry registry = new CreditScoreRegistry(config.initialDataProvider);
+        // Deploy CreditScoreRegistry with deployer as initial owner/provider
+        CreditScoreRegistry registry = new CreditScoreRegistry(deployer);
+
+        // Authorize separate data provider if different
+        if (dataProvider != deployer) {
+            registry.authorizeDataProvider(dataProvider);
+        }
         
         // Configure registry parameters
         if (config.minimumUpdateInterval != 1 hours) {
@@ -48,7 +54,7 @@ contract DeployScript is Script {
         console.log("CreditScoreRegistry deployed at:", address(registry));
         console.log("Minimum Update Interval:", registry.minimumUpdateInterval());
         console.log("Max Score History:", registry.maxScoreHistory());
-        console.log("Data Provider Authorized:", registry.authorizedDataProviders(config.initialDataProvider));
+        console.log("Data Provider Authorized:", registry.authorizedDataProviders(dataProvider));
         console.log("Owner:", registry.owner());
         
         // Verify deployment
@@ -60,7 +66,7 @@ contract DeployScript is Script {
         
         if (keccak256(bytes(network)) == keccak256(bytes("scroll-sepolia"))) {
             return DeployConfig({
-                initialDataProvider: vm.envAddress("DATA_PROVIDER_ADDRESS"),
+                initialDataProvider: address(0),
                 minimumUpdateInterval: 30 minutes,
                 maxScoreHistory: 50,
                 network: "scroll-sepolia"
@@ -68,7 +74,7 @@ contract DeployScript is Script {
         } else {
             // Default localhost/testnet configuration
             return DeployConfig({
-                initialDataProvider: vm.addr(vm.envUint("PRIVATE_KEY")),
+                initialDataProvider: address(0),
                 minimumUpdateInterval: 10 minutes,
                 maxScoreHistory: 25,
                 network: "localhost"
