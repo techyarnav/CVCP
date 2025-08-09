@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Build outputs
+/frontend/.next/
+/frontend/out/
+/backend/__pycache__/
+/contracts/out/
+/contracts/cache/
+/contracts/broadcast/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ML Models
+/ml-models/models/*.h5
+/ml-models/models/*.pkl
+/ml-models/data/*.csv
+
+# Database
+*.db
+*.sqlite3
+
+*.txt
