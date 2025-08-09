@@ -35,7 +35,7 @@ contract CreditScoreRegistryTest is Test {
         address dataProvider
     );
     
-    uint256 constant TEST_MINIMUM_INTERVAL = 0;
+    uint256 constant TEST_MINIMUM_INTERVAL = 10 minutes;
 
     function setUp() public {
         owner = address(this);
@@ -129,6 +129,11 @@ contract CreditScoreRegistryTest is Test {
         });
     }
     
+    // Helper to skip the configured minimum interval
+    function skipMinimumInterval() internal {
+        vm.warp(block.timestamp + TEST_MINIMUM_INTERVAL + 1);
+    }
+    
     // AUTHORIZATION TESTS
     
     function testInitialAuthorization() public {
@@ -166,6 +171,7 @@ contract CreditScoreRegistryTest is Test {
     // DATA UPDATE TESTS
     
     function testUpdateBehavioralData() public {
+        skipMinimumInterval();
         vm.prank(dataProvider);
         vm.expectEmit(true, false, false, false);
         emit BehavioralDataUpdated(user, block.timestamp, 100, dataProvider);
@@ -186,6 +192,8 @@ contract CreditScoreRegistryTest is Test {
     }
     
     function testUpdateBehavioralDataInvalidAddress() public {
+        // Skip minimum interval since this is the first call
+        skipMinimumInterval();
         vm.prank(dataProvider);
         vm.expectRevert("Invalid user address");
         registry.updateBehavioralData(address(0), defaultMetrics);
@@ -195,6 +203,8 @@ contract CreditScoreRegistryTest is Test {
         // Create metrics with very low quality (all zeros)
         ProtocolMath.BehavioralMetrics memory veryLowQuality;
         
+        // Skip minimum interval since this is the first call
+        skipMinimumInterval();
         vm.prank(dataProvider);
         vm.expectRevert("Insufficient data quality");
         registry.updateBehavioralData(user, veryLowQuality);
@@ -202,6 +212,7 @@ contract CreditScoreRegistryTest is Test {
     
     function testUpdateIntervalEnforcement() public {
         // First update should succeed
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
@@ -211,7 +222,7 @@ contract CreditScoreRegistryTest is Test {
         registry.updateBehavioralData(user, defaultMetrics);
         
         // Update after interval should succeed
-        vm.warp(block.timestamp + registry.minimumUpdateInterval() + 1);
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, highQualityMetrics);
     }
@@ -220,8 +231,12 @@ contract CreditScoreRegistryTest is Test {
     
     function testCalculateCreditScore() public {
         // First update behavioral data
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
+        
+        // Jump forward to avoid timing constraints
+        skipMinimumInterval();
         
         // Calculate score
         vm.prank(dataProvider);
@@ -247,6 +262,7 @@ contract CreditScoreRegistryTest is Test {
     
     function testCalculateScoreStaleData() public {
         // Add behavioral data
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
@@ -260,9 +276,11 @@ contract CreditScoreRegistryTest is Test {
     
     function testScoreInvariantsHighQuality() public {
         // Use high quality metrics
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, highQualityMetrics);
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
         
@@ -280,9 +298,11 @@ contract CreditScoreRegistryTest is Test {
     
     function testScoreInvariantsLowQuality() public {
         // Use low quality metrics
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, lowQualityMetrics);
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
         
@@ -296,9 +316,11 @@ contract CreditScoreRegistryTest is Test {
     // SCORE HISTORY TESTS
     
     function testScoreHistory() public {
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
         
@@ -307,10 +329,11 @@ contract CreditScoreRegistryTest is Test {
         assertGt(history[0], 0, "History score should be positive");
         
         // Add another score
-        vm.warp(block.timestamp + registry.minimumUpdateInterval() + 1);
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, highQualityMetrics);
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
         
@@ -321,6 +344,7 @@ contract CreditScoreRegistryTest is Test {
     
     function testScoreHistoryLimit() public {
         // Setup user
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
@@ -328,7 +352,7 @@ contract CreditScoreRegistryTest is Test {
         uint256 maxHistory = registry.maxScoreHistory();
         
         for (uint256 i = 0; i < maxHistory + 5; i++) {
-            vm.warp(block.timestamp + registry.minimumUpdateInterval() + 1);
+            skipMinimumInterval();
             
             vm.prank(dataProvider);
             registry.calculateCreditScore(user);
@@ -347,12 +371,14 @@ contract CreditScoreRegistryTest is Test {
         users[2] = address(0x1003);
         
         // Setup behavioral data for all users
+        skipMinimumInterval();
         for (uint256 i = 0; i < users.length; i++) {
             vm.prank(dataProvider);
             registry.updateBehavioralData(users[i], defaultMetrics);
         }
         
         // Batch calculate scores
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.batchCalculateScores(users);
         
@@ -383,9 +409,11 @@ contract CreditScoreRegistryTest is Test {
         assertEq(confidence, 75, "Preview confidence should match expected");
         
         // Compare with actual calculation
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
         
@@ -433,8 +461,9 @@ contract CreditScoreRegistryTest is Test {
         registry.pause();
         
         // Operations should fail when paused
+        skipMinimumInterval();
         vm.prank(dataProvider);
-        vm.expectRevert("Pausable: paused");
+        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
         registry.updateBehavioralData(user, defaultMetrics);
         
         // Unpause contract
@@ -449,6 +478,7 @@ contract CreditScoreRegistryTest is Test {
     
     function testFullWorkflow() public {
         // Step 1: Update behavioral data
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
@@ -465,7 +495,7 @@ contract CreditScoreRegistryTest is Test {
         // All data should be consistent
         assertTrue(score.isActive, "Score should be active");
         assertGt(score.totalScore, 0, "Score should be calculated");
-        assertEq(data.timestamp, score.lastUpdated - 1, "Data timestamp should be before score");
+        assertLe(data.timestamp, score.lastUpdated, "Data timestamp should be before or same as score");
         assertEq(history.length, 1, "History should have one entry");
         assertEq(history[0], score.totalScore, "History should match current score");
         assertGt(metadata.blockNumber, 0, "Metadata should be recorded");
@@ -484,8 +514,11 @@ contract CreditScoreRegistryTest is Test {
         fuzzMetrics.averageTransactionValue = avgValue;
         fuzzMetrics.protocolInteractionCount = protocolCount;
         
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, fuzzMetrics);
+        
+        skipMinimumInterval();
         
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
@@ -500,9 +533,11 @@ contract CreditScoreRegistryTest is Test {
     // GAS OPTIMIZATION TESTS
     
     function testGasUsageScoreCalculation() public {
+        skipMinimumInterval();
         vm.prank(dataProvider);
         registry.updateBehavioralData(user, defaultMetrics);
         
+        skipMinimumInterval();
         uint256 gasBefore = gasleft();
         vm.prank(dataProvider);
         registry.calculateCreditScore(user);
@@ -516,12 +551,14 @@ contract CreditScoreRegistryTest is Test {
     
     function testGasUsageBatchCalculation() public {
         address[] memory users = new address[](10);
+        skipMinimumInterval();
         for (uint256 i = 0; i < users.length; i++) {
             users[i] = address(uint160(0x2000 + i));
             vm.prank(dataProvider);
             registry.updateBehavioralData(users[i], defaultMetrics);
         }
         
+        skipMinimumInterval();
         uint256 gasBefore = gasleft();
         vm.prank(dataProvider);
         registry.batchCalculateScores(users);

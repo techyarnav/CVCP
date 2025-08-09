@@ -82,7 +82,7 @@ contract DeployScript is Script {
         }
     }
     
-    function verifyDeployment(CreditScoreRegistry registry, DeployConfig memory config) internal view {
+    function verifyDeployment(CreditScoreRegistry registry, DeployConfig memory /* config */) internal pure {
         console.log("=== Deployment Verification ===");
         
         // Test ProtocolMath library
