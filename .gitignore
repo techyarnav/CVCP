@@ -46,3 +46,6 @@ yarn-error.log*
 *.sqlite3
 
 *.txt
+
+test_*.py 
+run_*.py

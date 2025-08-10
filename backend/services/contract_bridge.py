@@ -69,8 +69,8 @@ class ContractBridge:
         self.w3 = None
         self.account = None
         self.registry_contract = None
-        self.registry_address = "0x8e9288aD536Ee22Df91026BE96cB1deE904C05eF"  # Deployed contract
-        self.chain_id = 534351  # Scroll Sepolia
+        self.registry_address = os.getenv('DEPLOYED_REGISTRY_ADDRESS', "0x8e9288aD536Ee22Df91026BE96cB1deE904C05eF")  # Deployed contract
+        self.chain_id = int(os.getenv('CHAIN_ID', '534351'))  # Scroll Sepolia
         
         # Load configuration from environment
         self._load_config()
@@ -80,15 +80,15 @@ class ContractBridge:
     def _load_config(self):
         """Load configuration from environment variables"""
         # Network configuration
-        self.rpc_url = os.getenv(
+        self.rpc_url = os.getenv('RPC_URL') or os.getenv(
             'SCROLL_SEPOLIA_RPC', 
             'https://scroll-sepolia.g.alchemy.com/v2/FKj-Ao97HOyiDsdSHZ3ED'
         )
         
         # Wallet configuration
-        self.private_key = os.getenv('SCROLL_SEPOLIA_PRIVATE_KEY')
+        self.private_key = os.getenv('PRIVATE_KEY') or os.getenv('SCROLL_SEPOLIA_PRIVATE_KEY')
         if not self.private_key:
-            raise ValueError("SCROLL_SEPOLIA_PRIVATE_KEY environment variable is required")
+            raise ValueError("PRIVATE_KEY or SCROLL_SEPOLIA_PRIVATE_KEY environment variable is required")
             
         # Gas configuration
         self.gas_price = int(os.getenv('SCROLL_SEPOLIA_GAS_PRICE', '100000000'))  # 0.1 gwei

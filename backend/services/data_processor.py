@@ -579,7 +579,7 @@ class DataProcessor:
             'is_valid': True,
             'issues': [],
             'metrics_count': len(contract_metrics),
-            'total_value': sum(contract_metrics.values())
+            'total_value': 0  # Will calculate after validation
         }
         
         # Check data types
@@ -587,8 +587,7 @@ class DataProcessor:
             if not isinstance(value, int):
                 validation_results['is_valid'] = False
                 validation_results['issues'].append(f"{key} is not an integer: {type(value)}")
-            
-            if value < 0:
+            elif value < 0:  # Only check negative for integers
                 validation_results['is_valid'] = False
                 validation_results['issues'].append(f"{key} has negative value: {value}")
         
@@ -603,6 +602,12 @@ class DataProcessor:
             if field not in contract_metrics:
                 validation_results['is_valid'] = False
                 validation_results['issues'].append(f"Missing required field: {field}")
+        
+        # Calculate total value safely (only for integer values)
+        try:
+            validation_results['total_value'] = sum(v for v in contract_metrics.values() if isinstance(v, int))
+        except Exception:
+            validation_results['total_value'] = 0
         
         return validation_results
 
