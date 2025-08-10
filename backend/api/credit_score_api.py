@@ -114,7 +114,7 @@ async def health_check():
         
         # Check contract connection
         contract_info = contract_bridge_local.get_contract_info()
-        contract_status = "connected" if contract_info else "disconnected"
+        contract_status = "connected" if contract_info.get('success', False) else "disconnected"
     except Exception as e:
         contract_status = f"error: {str(e)}"
     
@@ -160,7 +160,7 @@ async def calculate_credit_score(
         
         # Import fresh to avoid caching issues
         from services.data_processor import DataProcessor
-        from services.contract_bridge import ContractBridge, BehavioralMetrics
+        from services.contract_bridge import ContractBridge
         
         # Initialize fresh components
         data_processor_fresh = DataProcessor()
@@ -173,42 +173,13 @@ async def calculate_credit_score(
         if processing_metadata.get('processing_status') != 'success':
             logger.warning(f"Data processing issues: {processing_metadata}")
         
-        # Step 2: Convert to behavioral metrics format expected by contract bridge
-        logger.info("Step 2: Converting to behavioral metrics format...")
-        
-        # Create BehavioralMetrics dataclass object
-        behavioral_metrics = BehavioralMetrics(
-            transactionFrequency=contract_metrics.get('transactionFrequency', 0),
-            averageTransactionValue=contract_metrics.get('averageTransactionValue', 0),
-            gasEfficiencyScore=contract_metrics.get('gasEfficiencyScore', 50),
-            crossChainActivityCount=contract_metrics.get('crossChainActivityCount', 0),
-            consistencyMetric=contract_metrics.get('consistencyMetric', 0),
-            protocolInteractionCount=contract_metrics.get('protocolInteractionCount', 0),
-            totalDeFiBalanceUSD=contract_metrics.get('totalDeFiBalanceUSD', 0),
-            liquidityPositionCount=contract_metrics.get('liquidityPositionCount', 0),
-            protocolDiversityScore=contract_metrics.get('protocolDiversityScore', 0),
-            interactionDepthScore=contract_metrics.get('interactionDepthScore', 0),
-            yieldFarmingActive=contract_metrics.get('yieldFarmingActive', 0),
-            totalStakedUSD=contract_metrics.get('totalStakedUSD', 0),
-            stakingDurationDays=contract_metrics.get('stakingDurationDays', 0),
-            stakingPlatformCount=contract_metrics.get('stakingPlatformCount', 0),
-            rewardClaimFrequency=contract_metrics.get('rewardClaimFrequency', 0),
-            stakingLoyaltyScore=contract_metrics.get('stakingLoyaltyScore', 0),
-            liquidationEventCount=contract_metrics.get('liquidationEventCount', 0),
-            leverageRatio=contract_metrics.get('leverageRatio', 100),
-            portfolioVolatility=contract_metrics.get('portfolioVolatility', 50),
-            accountAgeScore=contract_metrics.get('accountAgeScore', 50),
-            activityConsistencyScore=contract_metrics.get('activityConsistencyScore', 33),
-            engagementScore=contract_metrics.get('engagementScore', 50)
-        )
-        
-        # Step 3: Execute complete contract flow
-        logger.info("Step 3: Executing contract interactions...")
+        # Step 2: Execute complete contract flow
+        logger.info("Step 2: Executing contract interactions...")
         try:
-            # Use the fresh contract bridge
-            contract_result = await contract_bridge_fresh.process_user_complete_flow(
+            # FIXED: Use the correct method name and pass the dict directly
+            contract_result = await contract_bridge_fresh.full_score_calculation_flow(
                 request.address, 
-                behavioral_metrics
+                contract_metrics  # Pass the dict from DataProcessor directly
             )
         except Exception as contract_error:
             error_msg = str(contract_error)
@@ -216,34 +187,20 @@ async def calculate_credit_score(
             # Handle specific authorization error
             if "Unauthorized provider" in error_msg:
                 logger.error(f"Contract authorization error: {error_msg}")
-                
-                # Try individual operations to better understand the issue
-                try:
-                    # First, try to get current score (read-only)
-                    existing_score = await contract_bridge.get_credit_score(request.address)
-                    logger.info(f"Read operation successful: {existing_score}")
-                    
-                    # The issue is with write operations - account not authorized
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Contract authorization error: The configured account is not authorized as a data provider. Please contact administrator."
-                    )
-                except Exception as read_error:
-                    logger.error(f"Even read operations failing: {read_error}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Contract connection error: {read_error}"
-                    )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Contract authorization error: The configured account is not authorized as a data provider. Please contact administrator."
+                )
             else:
                 raise HTTPException(
                     status_code=500,
                     detail=f"Contract interaction failed: {error_msg}"
                 )
         
-        if not contract_result['success']:
+        if not contract_result.get('success', False):
             raise HTTPException(
                 status_code=500,
-                detail=f"Contract interaction failed: {contract_result['error']}"
+                detail=f"Contract interaction failed: {contract_result.get('error', 'Unknown error')}"
             )
         
         processing_time = time.time() - start_time
@@ -253,8 +210,8 @@ async def calculate_credit_score(
         return ScoreCalculationResponse(
             success=True,
             address=request.address,
-            credit_score=contract_result['credit_score'],
-            contract_transactions=contract_result['transactions'],
+            credit_score=contract_result.get('credit_score'),
+            contract_transactions=contract_result.get('transactions'),
             processing_time_seconds=round(processing_time, 2),
             error=None,
             timestamp=datetime.now().isoformat()
@@ -308,33 +265,30 @@ async def get_credit_score(address: str):
         contract_bridge_local = ContractBridge()
         
         # Get score from contract
-        result = await contract_bridge_local.get_credit_score(address)
+        credit_score = await contract_bridge_local.get_credit_score(address)
         
-        if not result['success']:
-            error_msg = result['error']
-            if "no score found" in error_msg.lower() or "not found" in error_msg.lower():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No credit score found for address {address}. Use /api/calculate-score to generate one."
-                )
-            else:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error retrieving score: {error_msg}"
-                )
-        
-        # Check if score is active
-        credit_score = result['credit_score']
-        if not credit_score.isActive:
+        # FIXED: Handle CreditScore object properly
+        if not credit_score or not credit_score.isActive:
             raise HTTPException(
                 status_code=404,
-                detail=f"No active credit score found for address {address}"
+                detail=f"No active credit score found for address {address}. Use /api/calculate-score to generate one."
             )
         
         return CreditScoreResponse(
             success=True,
             address=address,
-            credit_score=credit_score.__dict__,
+            credit_score={
+                'totalScore': credit_score.totalScore,
+                'transactionScore': credit_score.transactionScore,
+                'defiScore': credit_score.defiScore,
+                'stakingScore': credit_score.stakingScore,
+                'riskScore': credit_score.riskScore,
+                'historyScore': credit_score.historyScore,
+                'lastUpdated': credit_score.lastUpdated,
+                'confidence': credit_score.confidence,
+                'updateCount': credit_score.updateCount,
+                'isActive': credit_score.isActive
+            },
             processing_metadata={
                 'source': 'on_chain',
                 'last_updated': credit_score.lastUpdated,
@@ -375,78 +329,28 @@ async def preview_score_calculation(address: str):
             )
         
         address = address.lower()
-        
         logger.info(f"Generating score preview for {address}")
         
-        # Get preview from data processor
-        try:
-            # Import fresh to avoid caching issues
-            from services.data_processor import DataProcessor
-            from services.contract_bridge import ContractBridge, BehavioralMetrics
-            
-            data_processor_local = DataProcessor()
-            contract_bridge_local = ContractBridge()
-            
-            contract_metrics, processing_metadata = await data_processor_local.process_user_behavioral_data(address)
-            
-            # Create BehavioralMetrics dataclass object
-            behavioral_metrics = BehavioralMetrics(
-                transactionFrequency=contract_metrics.get('transactionFrequency', 0),
-                averageTransactionValue=contract_metrics.get('averageTransactionValue', 0),
-                gasEfficiencyScore=contract_metrics.get('gasEfficiencyScore', 50),
-                crossChainActivityCount=contract_metrics.get('crossChainActivityCount', 0),
-                consistencyMetric=contract_metrics.get('consistencyMetric', 0),
-                protocolInteractionCount=contract_metrics.get('protocolInteractionCount', 0),
-                totalDeFiBalanceUSD=contract_metrics.get('totalDeFiBalanceUSD', 0),
-                liquidityPositionCount=contract_metrics.get('liquidityPositionCount', 0),
-                protocolDiversityScore=contract_metrics.get('protocolDiversityScore', 0),
-                interactionDepthScore=contract_metrics.get('interactionDepthScore', 0),
-                yieldFarmingActive=contract_metrics.get('yieldFarmingActive', 0),
-                totalStakedUSD=contract_metrics.get('totalStakedUSD', 0),
-                stakingDurationDays=contract_metrics.get('stakingDurationDays', 0),
-                stakingPlatformCount=contract_metrics.get('stakingPlatformCount', 0),
-                rewardClaimFrequency=contract_metrics.get('rewardClaimFrequency', 0),
-                stakingLoyaltyScore=contract_metrics.get('stakingLoyaltyScore', 0),
-                liquidationEventCount=contract_metrics.get('liquidationEventCount', 0),
-                leverageRatio=contract_metrics.get('leverageRatio', 100),
-                portfolioVolatility=contract_metrics.get('portfolioVolatility', 50),
-                accountAgeScore=contract_metrics.get('accountAgeScore', 50),
-                activityConsistencyScore=contract_metrics.get('activityConsistencyScore', 33),
-                engagementScore=contract_metrics.get('engagementScore', 50)
-            )
-            
-            # Get score preview from contract bridge
-            score_preview = await contract_bridge_local.preview_score(behavioral_metrics)
-            
+        # Import fresh to avoid caching issues
+        from services.data_processor import DataProcessor
+        data_processor_local = DataProcessor()
+        
+        # FIXED: Use the preview method that exists in DataProcessor
+        preview = await data_processor_local.preview_contract_data(address)
+        
+        if 'error' in preview:
             return {
-                "success": True,
-                "address": address,
-                "preview": {
-                    "predicted_score": score_preview[0] if isinstance(score_preview, tuple) else score_preview.get('score'),
-                    "confidence": score_preview[1] if isinstance(score_preview, tuple) else score_preview.get('confidence'),
-                    "contract_metrics": contract_metrics,
-                    "processing_metadata": processing_metadata
-                },
-                "note": "This is a preview only. Use /api/calculate-score to execute on-chain."
+                "success": False,
+                "error": preview['error'],
+                "fallback_data": preview.get('fallback_data')
             }
-            
-        except Exception as preview_error:
-            # Fallback to data processor preview
-            preview = await data_processor.preview_contract_data(address)
-            
-            if 'error' in preview:
-                return {
-                    "success": False,
-                    "error": preview['error'],
-                    "fallback_data": preview.get('fallback_data')
-                }
-            
-            return {
-                "success": True,
-                "address": address,
-                "preview": preview,
-                "note": "This is a preview only. Use /api/calculate-score to execute on-chain."
-            }
+        
+        return {
+            "success": True,
+            "address": address,
+            "preview": preview,
+            "note": "This is a preview only. Use /api/calculate-score to execute on-chain."
+        }
         
     except Exception as e:
         logger.error(f"Error generating preview for {address}: {str(e)}")
@@ -482,14 +386,14 @@ async def get_contract_info():
             "success": True,
             "contract_info": contract_info,
             "contract_address": config.CONTRACT_ADDRESS,
-            "chain_id": config.CHAIN_ID
+            "chain_id": getattr(config, 'CHAIN_ID', 534351)
         }
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
             "contract_address": config.CONTRACT_ADDRESS,
-            "chain_id": config.CHAIN_ID
+            "chain_id": getattr(config, 'CHAIN_ID', 534351)
         }
 
 # Error handlers
