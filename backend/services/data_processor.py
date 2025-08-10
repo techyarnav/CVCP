@@ -610,6 +610,37 @@ class DataProcessor:
             validation_results['total_value'] = 0
         
         return validation_results
+    
+    def _convert_to_behavioral_metrics_format(self, contract_metrics: Dict[str, int], processing_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert contract metrics back to BehavioralMetrics format for contract bridge"""
+        
+        return {
+            'transactionFrequency': contract_metrics.get('transactionFrequency', 0),
+            'averageTransactionValue': contract_metrics.get('averageTransactionValue', 0),
+            'gasEfficiencyScore': contract_metrics.get('gasEfficiencyScore', 50),
+            'crossChainActivityCount': contract_metrics.get('crossChainActivityCount', 0),
+            'consistencyMetric': contract_metrics.get('consistencyMetric', 0),
+            'protocolInteractionCount': contract_metrics.get('protocolInteractionCount', 0),
+            'totalDeFiBalanceUSD': contract_metrics.get('totalDeFiBalanceUSD', 0),
+            'liquidityPositionCount': contract_metrics.get('liquidityPositionCount', 0),
+            'protocolDiversityScore': contract_metrics.get('protocolDiversityScore', 0),
+            'interactionDepthScore': contract_metrics.get('interactionDepthScore', 0),
+            'yieldFarmingActive': contract_metrics.get('yieldFarmingActive', 0),
+            'totalStakedUSD': contract_metrics.get('totalStakedUSD', 0),
+            'stakingDurationDays': contract_metrics.get('stakingDurationDays', 0),
+            'stakingPlatformCount': contract_metrics.get('stakingPlatformCount', 0),
+            'rewardClaimFrequency': contract_metrics.get('rewardClaimFrequency', 0),
+            'stakingLoyaltyScore': contract_metrics.get('stakingLoyaltyScore', 0),
+            'platformDiversityScore': contract_metrics.get('platformDiversityScore', 0),
+            'liquidationEventCount': contract_metrics.get('liquidationEventCount', 0),
+            'leverageRatio': contract_metrics.get('leverageRatio', 100),
+            'portfolioVolatility': contract_metrics.get('portfolioVolatility', 50),
+            'riskScore': contract_metrics.get('riskScore', 50),
+            'accountAge': contract_metrics.get('accountAge', 0),
+            'lastActivityDays': contract_metrics.get('lastActivityDays', 0),
+            'engagementScore': contract_metrics.get('engagementScore', 50),
+            'dataQuality': processing_metadata.get('data_quality', {}).get('quality_score', 50)
+        }
 
 # Test implementation
 async def test_data_processor():
