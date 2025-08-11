@@ -23,8 +23,8 @@ from config import Config
 # Initialize FastAPI app
 app = FastAPI(
     title="Crypto Credit Score API",
-    description="On-chain credit scoring protocol API",
-    version="1.0.0",
+    description="On-chain credit scoring protocol API with AI analysis and smart rate limiting",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -40,6 +40,15 @@ app.add_middleware(
 
 # Initialize only config globally 
 config = Config()
+
+# ✅ Initialize Gemini AI Service (Import from your separate file)
+try:
+    from services.gemini_ai_service import GeminiAIService
+    gemini_ai = GeminiAIService()
+    logger.info("✅ Gemini AI service initialized successfully")
+except Exception as e:
+    gemini_ai = None
+    logger.warning(f"⚠️ Gemini AI initialization failed: {e}")
 
 # Request/Response Models
 class CalculateScoreRequest(BaseModel):
@@ -60,14 +69,20 @@ class CreditScoreResponse(BaseModel):
     error: Optional[str] = None
     timestamp: str
 
+# In your existing API file, just change this one class:
+
 class ScoreCalculationResponse(BaseModel):
     success: bool
     address: str
     credit_score: Optional[Dict[str, Any]] = None
     contract_transactions: Optional[Dict[str, str]] = None
     processing_time_seconds: Optional[float] = None
+    ai_analysis: Optional[Dict[str, Any]] = None  # ✅ Changed from str to Dict[str, Any]
+    rate_limited: Optional[bool] = False
+    cache_used: Optional[bool] = False
     error: Optional[str] = None
     timestamp: str
+
 
 # Rate limiting (simple in-memory implementation)
 request_history = {}
@@ -91,17 +106,54 @@ def rate_limit_check(address: str) -> bool:
     request_history[address].append(now)
     return True
 
+# ✅ Helper function to check contract rate limiting
+async def check_contract_cooldown(address: str) -> Dict[str, Any]:
+    """Check if address is in contract cooldown period"""
+    try:
+        from services.contract_bridge import ContractBridge
+        contract_bridge = ContractBridge()
+        
+        existing_score = await contract_bridge.get_credit_score(address)
+        
+        if existing_score and existing_score.isActive:
+            current_time = int(time.time())
+            last_updated = existing_score.lastUpdated
+            time_diff = current_time - last_updated
+            cooldown_period = 1800  # 30 minutes in seconds
+            
+            if time_diff < cooldown_period:
+                remaining_time = cooldown_period - time_diff
+                return {
+                    'in_cooldown': True,
+                    'existing_score': existing_score,
+                    'time_diff_minutes': time_diff // 60,
+                    'remaining_minutes': remaining_time // 60,
+                    'can_use_cache': True
+                }
+        
+        return {'in_cooldown': False, 'existing_score': existing_score}
+        
+    except Exception as e:
+        logger.error(f"Error checking cooldown for {address}: {e}")
+        return {'in_cooldown': False, 'existing_score': None}
+
 # API Routes
 
-@app.get("/", response_model=Dict[str, str])
+@app.get("/", response_model=Dict[str, Any])
 async def root():
     """Root endpoint with API information"""
     return {
-        "message": "Crypto Credit Score Protocol API",
-        "version": "1.0.0",
+        "message": "Crypto Credit Score Protocol API with AI Analysis & Smart Rate Limiting",
+        "version": "1.1.0",
         "status": "operational",
         "docs": "/docs",
-        "contract": config.CONTRACT_ADDRESS
+        "contract": config.CONTRACT_ADDRESS,
+        "ai_enabled": bool(gemini_ai),
+        "rate_limiting": {
+            "api_requests_per_minute": config.RATE_LIMIT_PER_MINUTE,
+            "contract_cooldown_minutes": 30,
+            "cache_duration_minutes": 30
+        }
     }
 
 @app.get("/health", response_model=Dict[str, Any])
@@ -124,6 +176,8 @@ async def health_check():
         "components": {
             "data_processor": "operational",
             "contract_bridge": contract_status,
+            "gemini_ai": "operational" if gemini_ai else "disabled",
+            "rate_limiting": "active",
             "api": "operational"
         }
     }
@@ -134,28 +188,88 @@ async def calculate_credit_score(
     background_tasks: BackgroundTasks
 ):
     """
-    Calculate credit score for a wallet address
+    Calculate credit score for a wallet address with smart rate limiting and AI analysis
     
     This endpoint:
-    1. Processes on-chain behavioral data
-    2. Updates smart contract with behavioral metrics
-    3. Triggers score calculation on-chain
-    4. Returns the calculated credit score
+    1. Checks API rate limiting
+    2. Checks contract cooldown period
+    3. Returns cached score if in cooldown (unless force_refresh=true)
+    4. Processes on-chain behavioral data
+    5. Updates smart contract with behavioral metrics
+    6. Triggers score calculation on-chain
+    7. Generates AI analysis of the credit score
+    8. Returns the calculated credit score with AI insights
     """
     
     start_time = time.time()
     
     try:
-        # Rate limiting
+        # Step 1: API Rate limiting
         if not rate_limit_check(request.address):
             raise HTTPException(
                 status_code=429,
-                detail="Rate limit exceeded. Please try again later."
+                detail="API rate limit exceeded. Please try again later."
             )
         
         logger.info(f"Starting credit score calculation for {request.address}")
         
-        # Step 1: Process behavioral data
+        # Step 2: Check contract cooldown period
+        cooldown_info = await check_contract_cooldown(request.address)
+        
+        if cooldown_info['in_cooldown'] and not request.force_refresh:
+            logger.info(f"⏰ Address {request.address} in cooldown period - returning cached score")
+            
+            existing_score = cooldown_info['existing_score']
+            
+            # Generate AI analysis for cached score
+            ai_analysis = None
+            if gemini_ai and existing_score:
+                try:
+                    logger.info("Generating AI analysis for cached score...")
+                    score_data = {
+                        'total_score': existing_score.totalScore,
+                        'transaction_score': existing_score.transactionScore,
+                        'defi_score': existing_score.defiScore,
+                        'staking_score': existing_score.stakingScore,
+                        'risk_score': existing_score.riskScore,
+                        'history_score': existing_score.historyScore
+                    }
+                    ai_analysis = await gemini_ai.analyze_credit_score(score_data)
+                    logger.info("✅ AI analysis completed for cached score")
+                except Exception as ai_error:
+                    logger.error(f"AI analysis failed for cached score: {ai_error}")
+                    ai_analysis = "AI analysis temporarily unavailable"
+            
+            processing_time = time.time() - start_time
+            
+            return ScoreCalculationResponse(
+                success=True,
+                address=request.address,
+                credit_score={
+                    'totalScore': existing_score.totalScore,
+                    'transactionScore': existing_score.transactionScore,
+                    'defiScore': existing_score.defiScore,
+                    'stakingScore': existing_score.stakingScore,
+                    'riskScore': existing_score.riskScore,
+                    'historyScore': existing_score.historyScore,
+                    'confidence': existing_score.confidence,
+                    'lastUpdated': existing_score.lastUpdated,
+                    'updateCount': existing_score.updateCount,
+                    'isActive': existing_score.isActive
+                } if existing_score else None,
+                contract_transactions={},
+                processing_time_seconds=round(processing_time, 2),
+                ai_analysis=ai_analysis,
+                rate_limited=True,
+                cache_used=True,
+                error=None,
+                timestamp=datetime.now().isoformat()
+            )
+        
+        # Step 3: Proceed with full calculation (either no cooldown or force_refresh=true)
+        if cooldown_info['in_cooldown'] and request.force_refresh:
+            logger.info(f"🔄 Force refresh requested for {request.address} - bypassing cooldown")
+        
         logger.info("Step 1: Processing behavioral data...")
         
         # Import fresh to avoid caching issues
@@ -173,19 +287,71 @@ async def calculate_credit_score(
         if processing_metadata.get('processing_status') != 'success':
             logger.warning(f"Data processing issues: {processing_metadata}")
         
-        # Step 2: Execute complete contract flow
+        # Step 4: Execute complete contract flow with enhanced error handling
         logger.info("Step 2: Executing contract interactions...")
         try:
-            # FIXED: Use the correct method name and pass the dict directly
             contract_result = await contract_bridge_fresh.full_score_calculation_flow(
                 request.address, 
-                contract_metrics  # Pass the dict from DataProcessor directly
+                contract_metrics
             )
         except Exception as contract_error:
             error_msg = str(contract_error)
             
-            # Handle specific authorization error
-            if "Unauthorized provider" in error_msg:
+            # Handle specific errors
+            if "Update too frequent" in error_msg:
+                logger.warning(f"⏰ Contract rate limit hit for {request.address}")
+                
+                # Try to return existing score with explanation
+                try:
+                    existing_score = await contract_bridge_fresh.get_credit_score(request.address)
+                    if existing_score and existing_score.isActive:
+                        # Generate AI analysis for existing score
+                        ai_analysis = None
+                        if gemini_ai:
+                            score_data = {
+                                'total_score': existing_score.totalScore,
+                                'transaction_score': existing_score.transactionScore,
+                                'defi_score': existing_score.defiScore,
+                                'staking_score': existing_score.stakingScore,
+                                'risk_score': existing_score.riskScore,
+                                'history_score': existing_score.historyScore
+                            }
+                            ai_analysis = await gemini_ai.analyze_credit_score(score_data)
+                        
+                        processing_time = time.time() - start_time
+                        
+                        return ScoreCalculationResponse(
+                            success=True,
+                            address=request.address,
+                            credit_score={
+                                'totalScore': existing_score.totalScore,
+                                'transactionScore': existing_score.transactionScore,
+                                'defiScore': existing_score.defiScore,
+                                'stakingScore': existing_score.stakingScore,
+                                'riskScore': existing_score.riskScore,
+                                'historyScore': existing_score.historyScore,
+                                'confidence': existing_score.confidence,
+                                'lastUpdated': existing_score.lastUpdated,
+                                'updateCount': existing_score.updateCount,
+                                'isActive': existing_score.isActive
+                            },
+                            contract_transactions={},
+                            processing_time_seconds=round(processing_time, 2),
+                            ai_analysis=ai_analysis,
+                            rate_limited=True,
+                            cache_used=True,
+                            error="Contract update rate limited - returned cached score. Please wait 30 minutes between updates.",
+                            timestamp=datetime.now().isoformat()
+                        )
+                except:
+                    pass
+                
+                raise HTTPException(
+                    status_code=429,
+                    detail="Contract rate limited: Please wait at least 30 minutes between score updates for the same address."
+                )
+            
+            elif "Unauthorized provider" in error_msg:
                 logger.error(f"Contract authorization error: {error_msg}")
                 raise HTTPException(
                     status_code=403,
@@ -203,6 +369,29 @@ async def calculate_credit_score(
                 detail=f"Contract interaction failed: {contract_result.get('error', 'Unknown error')}"
             )
         
+        # Step 5: Generate AI Analysis for new score
+        ai_analysis = None
+        if gemini_ai and contract_result.get('credit_score'):
+            try:
+                logger.info("Step 3: Generating AI analysis...")
+                credit_score_data = contract_result['credit_score']
+                
+                score_data = {
+                    'total_score': credit_score_data.get('totalScore', 0),
+                    'transaction_score': credit_score_data.get('transactionScore', 0),
+                    'defi_score': credit_score_data.get('defiScore', 0),
+                    'staking_score': credit_score_data.get('stakingScore', 0),
+                    'risk_score': credit_score_data.get('riskScore', 0),
+                    'history_score': credit_score_data.get('historyScore', 0)
+                }
+                
+                ai_analysis = await gemini_ai.analyze_credit_score(score_data)
+                logger.info("✅ AI analysis completed successfully")
+                
+            except Exception as ai_error:
+                logger.error(f"AI analysis failed: {ai_error}")
+                ai_analysis = "AI analysis temporarily unavailable"
+        
         processing_time = time.time() - start_time
         
         logger.info(f"Credit score calculation completed for {request.address} in {processing_time:.2f}s")
@@ -213,6 +402,9 @@ async def calculate_credit_score(
             credit_score=contract_result.get('credit_score'),
             contract_transactions=contract_result.get('transactions'),
             processing_time_seconds=round(processing_time, 2),
+            ai_analysis=ai_analysis,
+            rate_limited=False,
+            cache_used=False,
             error=None,
             timestamp=datetime.now().isoformat()
         )
@@ -221,6 +413,8 @@ async def calculate_credit_score(
         raise
     except Exception as e:
         processing_time = time.time() - start_time
+        error_msg = str(e)
+        
         logger.error(f"Error calculating credit score for {request.address}: {str(e)}")
         
         return ScoreCalculationResponse(
@@ -229,17 +423,16 @@ async def calculate_credit_score(
             credit_score=None,
             contract_transactions=None,
             processing_time_seconds=round(processing_time, 2),
+            ai_analysis=None,
+            rate_limited=False,
+            cache_used=False,
             error=str(e),
             timestamp=datetime.now().isoformat()
         )
 
 @app.get("/api/score/{address}", response_model=CreditScoreResponse)
 async def get_credit_score(address: str):
-    """
-    Get existing credit score for a wallet address
-    
-    Returns the current credit score stored on-chain without triggering recalculation
-    """
+    """Get existing credit score for a wallet address"""
     
     try:
         # Validate address format
@@ -267,7 +460,7 @@ async def get_credit_score(address: str):
         # Get score from contract
         credit_score = await contract_bridge_local.get_credit_score(address)
         
-        # FIXED: Handle CreditScore object properly
+        # Handle CreditScore object properly
         if not credit_score or not credit_score.isActive:
             raise HTTPException(
                 status_code=404,
@@ -314,11 +507,7 @@ async def get_credit_score(address: str):
 
 @app.get("/api/preview/{address}")
 async def preview_score_calculation(address: str):
-    """
-    Preview what the credit score calculation would be without executing on-chain
-    
-    Useful for testing and showing users what their score would be
-    """
+    """Preview what the credit score calculation would be without executing on-chain"""
     
     try:
         # Validate address
@@ -335,7 +524,7 @@ async def preview_score_calculation(address: str):
         from services.data_processor import DataProcessor
         data_processor_local = DataProcessor()
         
-        # FIXED: Use the preview method that exists in DataProcessor
+        # Use the preview method that exists in DataProcessor
         preview = await data_processor_local.preview_contract_data(address)
         
         if 'error' in preview:
@@ -359,6 +548,105 @@ async def preview_score_calculation(address: str):
             "error": str(e)
         }
 
+# ✅ New endpoint to get AI analysis for existing scores
+@app.get("/api/analyze/{address}")
+async def analyze_existing_score(address: str):
+    """Get AI analysis for an existing credit score using your separate AI service"""
+    
+    try:
+        # Validate address
+        if not address or len(address) != 42 or not address.startswith('0x'):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid Ethereum address format"
+            )
+        
+        address = address.lower()
+        
+        if not gemini_ai:
+            raise HTTPException(
+                status_code=503,
+                detail="AI analysis service is not available"
+            )
+        
+        # Get existing credit score
+        from services.contract_bridge import ContractBridge
+        contract_bridge = ContractBridge()
+        credit_score = await contract_bridge.get_credit_score(address)
+        
+        if not credit_score or not credit_score.isActive:
+            raise HTTPException(
+                status_code=404,
+                detail="No active credit score found for this address"
+            )
+        
+        # Generate AI analysis using your separate service
+        score_data = {
+            'total_score': credit_score.totalScore,
+            'transaction_score': credit_score.transactionScore,
+            'defi_score': credit_score.defiScore,
+            'staking_score': credit_score.stakingScore,
+            'risk_score': credit_score.riskScore,
+            'history_score': credit_score.historyScore
+        }
+        
+        ai_analysis = await gemini_ai.analyze_credit_score(score_data)
+        
+        return {
+            "success": True,
+            "address": address,
+            "credit_score": credit_score.totalScore,
+            "ai_analysis": ai_analysis,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing score for {address}: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+# ✅ New endpoint to check rate limit status
+@app.get("/api/rate-limit-status/{address}")
+async def get_rate_limit_status(address: str):
+    """Check rate limit status for an address"""
+    
+    try:
+        if not address or len(address) != 42 or not address.startswith('0x'):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid Ethereum address format"
+            )
+        
+        address = address.lower()
+        
+        # Check contract cooldown
+        cooldown_info = await check_contract_cooldown(address)
+        
+        return {
+            "success": True,
+            "address": address,
+            "contract_cooldown": {
+                "in_cooldown": cooldown_info['in_cooldown'],
+                "minutes_since_last_update": cooldown_info.get('time_diff_minutes', 0),
+                "minutes_remaining": cooldown_info.get('remaining_minutes', 0),
+                "can_update": not cooldown_info['in_cooldown']
+            },
+            "has_existing_score": bool(cooldown_info.get('existing_score')),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/api/stats")
 async def get_api_stats():
     """Get API usage statistics"""
@@ -370,7 +658,9 @@ async def get_api_stats():
         "total_requests_last_hour": total_requests,
         "active_addresses": active_addresses,
         "contract_address": config.CONTRACT_ADDRESS,
-        "rate_limit_per_minute": config.RATE_LIMIT_PER_MINUTE
+        "rate_limit_per_minute": config.RATE_LIMIT_PER_MINUTE,
+        "contract_cooldown_minutes": 30,
+        "ai_enabled": bool(gemini_ai)
     }
 
 @app.get("/api/contract-info")
@@ -386,7 +676,12 @@ async def get_contract_info():
             "success": True,
             "contract_info": contract_info,
             "contract_address": config.CONTRACT_ADDRESS,
-            "chain_id": getattr(config, 'CHAIN_ID', 534351)
+            "chain_id": getattr(config, 'CHAIN_ID', 534351),
+            "ai_enabled": bool(gemini_ai),
+            "rate_limiting": {
+                "contract_cooldown_minutes": 30,
+                "api_requests_per_minute": config.RATE_LIMIT_PER_MINUTE
+            }
         }
     except Exception as e:
         return {
@@ -426,21 +721,23 @@ async def startup_event():
     """Initialize API on startup"""
     try:
         config.validate()
-        logger.info("Credit Score API started successfully")
-        logger.info(f"Contract: {config.CONTRACT_ADDRESS}")
-        logger.info(f"Server: http://{config.API_HOST}:{config.API_PORT}")
+        logger.info("🚀 Credit Score API with Smart Rate Limiting & AI Analysis started successfully")
+        logger.info(f"📄 Contract: {config.CONTRACT_ADDRESS}")
+        logger.info(f"🌐 Server: http://{config.API_HOST}:{config.API_PORT}")
+        logger.info(f"🤖 AI Analysis: {'✅ Enabled' if gemini_ai else '❌ Disabled'}")
+        logger.info(f"⏰ Rate Limiting: API={config.RATE_LIMIT_PER_MINUTE}/min, Contract=30min cooldown")
         
         # Test contract connection with fresh import
         try:
             from services.contract_bridge import ContractBridge
             contract_bridge_local = ContractBridge()
             contract_info = contract_bridge_local.get_contract_info()
-            logger.info(f"Contract connection successful: {contract_info}")
+            logger.info(f"✅ Contract connection successful: {contract_info}")
         except Exception as e:
-            logger.warning(f"Contract connection issue (will continue): {e}")
+            logger.warning(f"⚠️ Contract connection issue (will continue): {e}")
             
     except Exception as e:
-        logger.error(f"Failed to start API: {str(e)}")
+        logger.error(f"❌ Failed to start API: {str(e)}")
         raise
 
 if __name__ == "__main__":
