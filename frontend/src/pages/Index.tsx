@@ -12,34 +12,30 @@ import {
   ExternalLink,
   CheckCircle,
   AlertCircle,
-  Info
+  Info,
+  RefreshCw,
+  Brain
 } from 'lucide-react';
 import ParticleBackground from '@/components/ParticleBackground';
 import ScoreCard from '@/components/ScoreCard';
 import CircularProgress from '@/components/CircularProgress';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import AIAnalysisCard from '@/components/AIAnalysisCard';
+import MetadataCard from '@/components/MetadataCard';
+import { creditScoreApi, CreditScoreResponse } from '@/services/creditScoreApi';
 import heroBg from '@/assets/hero-bg.jpg';
 
-interface CreditScore {
-  total: number;
-  components: {
-    transactionActivity: { score: number; weight: number };
-    defiInteractions: { score: number; weight: number };
-    stakingBehavior: { score: number; weight: number };
-    riskAssessment: { score: number; weight: number };
-    historicalPatterns: { score: number; weight: number };
-  };
-  confidence: number;
-  lastUpdated: string;
-  transactionHash: string;
-}
+
 
 const Index = () => {
   const [walletAddress, setWalletAddress] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [creditScore, setCreditScore] = useState<CreditScore | null>(null);
+  const [creditScoreData, setCreditScoreData] = useState<CreditScoreResponse | null>(null);
   const [isValidAddress, setIsValidAddress] = useState(true);
   const [showResults, setShowResults] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
   const validateAddress = (address: string) => {
     const isValid = /^0x[a-fA-F0-9]{40}$/.test(address);
@@ -53,38 +49,47 @@ const Index = () => {
     validateAddress(address);
   };
 
-  const simulateAnalysis = async () => {
+  const analyzeCreditScore = async () => {
     if (!validateAddress(walletAddress)) return;
 
     setIsLoading(true);
     setShowResults(false);
+    setError(null);
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    try {
+      const response = await creditScoreApi.calculateScore({
+        address: walletAddress,
+        force_refresh: forceRefresh
+      });
 
-    // Mock credit score data
-    const mockScore: CreditScore = {
-      total: 742,
-      components: {
-        transactionActivity: { score: 185, weight: 25 },
-        defiInteractions: { score: 160, weight: 20 },
-        stakingBehavior: { score: 190, weight: 25 },
-        riskAssessment: { score: 152, weight: 20 },
-        historicalPatterns: { score: 89, weight: 10 }
-      },
-      confidence: 87,
-      lastUpdated: new Date().toLocaleString(),
-      transactionHash: '0x8e9288aD536Ee22Df91026BE96cB1deE904C05eF'
-    };
-
-    setCreditScore(mockScore);
-    setIsLoading(false);
-    setShowResults(true);
+      if (response.success) {
+        setCreditScoreData(response);
+        setShowResults(true);
+      } else {
+        setError(response.error || 'Failed to calculate credit score');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while analyzing the address');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
     // Set demo address on load
     setWalletAddress('0x742d35Cc6654c967e5c749CB1b5B43cA2E9b0b70');
+    
+    // Check backend health on component mount
+    const checkBackendHealth = async () => {
+      try {
+        const isHealthy = await creditScoreApi.checkBackendHealth();
+        setBackendStatus(isHealthy ? 'online' : 'offline');
+      } catch (error) {
+        setBackendStatus('offline');
+      }
+    };
+    
+    checkBackendHealth();
   }, []);
 
   return (
@@ -111,9 +116,21 @@ const Index = () => {
           <p className="text-xl text-muted-foreground mb-4">
             Advanced DeFi Credit Scoring on Scroll Sepolia
           </p>
-          <Badge variant="outline" className="text-primary border-primary/50">
-            CVCP v2.0 • Powered by Scroll
-          </Badge>
+          <div className="flex items-center gap-4">
+            <Badge variant="outline" className="text-primary border-primary/50">
+              CVCP v2.0 • Powered by Scroll
+            </Badge>
+            <Badge 
+              variant={backendStatus === 'online' ? 'default' : backendStatus === 'checking' ? 'secondary' : 'destructive'}
+              className="flex items-center gap-2"
+            >
+              <div className={`w-2 h-2 rounded-full ${
+                backendStatus === 'online' ? 'bg-green-400' : 
+                backendStatus === 'checking' ? 'bg-yellow-400' : 'bg-red-400'
+              }`} />
+              Backend: {backendStatus === 'checking' ? 'Checking...' : backendStatus === 'online' ? 'Online' : 'Offline'}
+            </Badge>
+          </div>
         </header>
 
         {/* Main Input Section */}
@@ -140,9 +157,23 @@ const Index = () => {
                   </p>
                 )}
               </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="forceRefresh"
+                  checked={forceRefresh}
+                  onChange={(e) => setForceRefresh(e.target.checked)}
+                  className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="forceRefresh" className="text-sm text-muted-foreground flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4" />
+                  Force refresh (bypass cache)
+                </label>
+              </div>
               
               <Button
-                onClick={simulateAnalysis}
+                onClick={analyzeCreditScore}
                 disabled={isLoading || !walletAddress || !isValidAddress}
                 className="btn-primary w-full py-6 text-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -162,23 +193,38 @@ const Index = () => {
           </Card>
         </div>
 
+        {/* Error Display */}
+        {error && (
+          <div className="max-w-2xl mx-auto mb-8 animate-slide-in-up">
+            <Card className="glass p-6 border-destructive/50 bg-destructive/10">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive" />
+                <div>
+                  <h3 className="font-semibold text-destructive">Error</h3>
+                  <p className="text-sm text-destructive/80">{error}</p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
         {/* Results Dashboard */}
-        {showResults && creditScore && (
+        {showResults && creditScoreData && creditScoreData.credit_score && (
           <div className="space-y-8 animate-slide-in-up delay-300">
             {/* Main Score Display */}
             <div className="text-center mb-12">
               <CircularProgress 
-                score={creditScore.total} 
+                score={creditScoreData.credit_score?.totalScore || 0} 
                 className="mx-auto mb-6"
               />
               <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-secondary" />
-                  Confidence: {creditScore.confidence}%
+                  Confidence: {creditScoreData.credit_score?.confidence || 0}%
                 </div>
                 <div className="flex items-center gap-2">
                   <Info className="w-4 h-4 text-primary" />
-                  Updated: {creditScore.lastUpdated}
+                  Updated: {creditScoreData.credit_score?.lastUpdated ? new Date(creditScoreData.credit_score.lastUpdated * 1000).toLocaleString() : 'Unknown'}
                 </div>
               </div>
             </div>
@@ -186,50 +232,80 @@ const Index = () => {
             {/* Component Scores */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
               <ScoreCard
-                title="Transaction Activity"
-                score={creditScore.components.transactionActivity.score}
-                maxScore={200}
-                weight={creditScore.components.transactionActivity.weight}
+                title="Transaction Score"
+                score={creditScoreData.credit_score?.transactionScore || 0}
+                maxScore={100}
                 icon={<Activity />}
                 delay={0.1}
               />
               <ScoreCard
-                title="DeFi Interactions"
-                score={creditScore.components.defiInteractions.score}
-                maxScore={200}
-                weight={creditScore.components.defiInteractions.weight}
+                title="DeFi Score"
+                score={creditScoreData.credit_score?.defiScore || 0}
+                maxScore={100}
                 icon={<Coins />}
                 delay={0.2}
               />
               <ScoreCard
-                title="Staking Behavior"
-                score={creditScore.components.stakingBehavior.score}
-                maxScore={200}
-                weight={creditScore.components.stakingBehavior.weight}
+                title="Staking Score"
+                score={creditScoreData.credit_score?.stakingScore || 0}
+                maxScore={100}
                 icon={<TrendingUp />}
                 delay={0.3}
               />
               <ScoreCard
-                title="Risk Assessment"
-                score={creditScore.components.riskAssessment.score}
+                title="Risk Score"
+                score={creditScoreData.credit_score?.riskScore || 0}
                 maxScore={200}
-                weight={creditScore.components.riskAssessment.weight}
                 icon={<Shield />}
                 delay={0.4}
               />
               <ScoreCard
-                title="Historical Patterns"
-                score={creditScore.components.historicalPatterns.score}
-                maxScore={200}
-                weight={creditScore.components.historicalPatterns.weight}
+                title="History Score"
+                score={creditScoreData.credit_score?.historyScore || 0}
+                maxScore={100}
                 icon={<TrendingUp />}
                 delay={0.5}
               />
             </div>
 
+            {/* AI Analysis and Metadata */}
+            <div className="grid md:grid-cols-2 gap-6 mb-12">
+              {creditScoreData.ai_analysis ? (
+                <AIAnalysisCard 
+                  analysis={creditScoreData.ai_analysis}
+                  delay={0.6}
+                />
+              ) : (
+                <Card className="glass p-6 border-border/20 animate-slide-in-up opacity-0" style={{ animationDelay: '0.6s' }}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-gradient-primary rounded-full flex items-center justify-center">
+                      <Brain className="w-5 h-5 text-primary-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-card-foreground">AI Analysis</h3>
+                      <p className="text-sm text-muted-foreground">Powered by Gemini AI</p>
+                    </div>
+                  </div>
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground mb-2">AI analysis not available</p>
+                    <p className="text-xs text-muted-foreground">This may be due to rate limiting or temporary service unavailability</p>
+                  </div>
+                </Card>
+              )}
+              <MetadataCard
+                processingTime={creditScoreData.processing_time_seconds || 0}
+                cacheUsed={creditScoreData.cache_used || false}
+                rateLimited={creditScoreData.rate_limited || false}
+                updateCount={creditScoreData.credit_score?.updateCount || 0}
+                lastUpdated={creditScoreData.credit_score?.lastUpdated || Date.now() / 1000}
+                isActive={creditScoreData.credit_score?.isActive || false}
+                delay={0.7}
+              />
+            </div>
+
             {/* Additional Info */}
             <div className="grid md:grid-cols-2 gap-6">
-              <Card className="glass p-6 border-border/20 animate-slide-in-up delay-600">
+              <Card className="glass p-6 border-border/20 animate-slide-in-up delay-800">
                 <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
                   <Info className="w-5 h-5 text-primary" />
                   Protocol Information
@@ -240,9 +316,9 @@ const Index = () => {
                     <span className="text-card-foreground">Scroll Sepolia</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Contract</span>
+                    <span className="text-muted-foreground">Address</span>
                     <span className="text-card-foreground font-mono text-xs">
-                      {creditScore.transactionHash.slice(0, 10)}...
+                      {creditScoreData.address ? `${creditScoreData.address.slice(0, 10)}...${creditScoreData.address.slice(-8)}` : 'Unknown'}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -252,22 +328,22 @@ const Index = () => {
                 </div>
               </Card>
 
-              <Card className="glass p-6 border-border/20 animate-slide-in-up delay-700">
+              <Card className="glass p-6 border-border/20 animate-slide-in-up delay-900">
                 <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
                   <ExternalLink className="w-5 h-5 text-primary" />
                   Blockchain Explorer
                 </h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  View the transaction on Scroll Sepolia explorer
+                  View the address on Scroll Sepolia explorer
                 </p>
                 <Button 
                   variant="outline" 
                   size="sm" 
                   className="w-full border-primary/50 text-primary hover:bg-primary/10"
-                  onClick={() => window.open(`https://sepolia.scrollscan.com/tx/${creditScore.transactionHash}`, '_blank')}
+                  onClick={() => creditScoreData.address ? window.open(`https://sepolia.scrollscan.com/address/${creditScoreData.address}`, '_blank') : null}
                 >
                   <ExternalLink className="w-4 h-4 mr-2" />
-                  View Transaction
+                  View Address
                 </Button>
               </Card>
             </div>

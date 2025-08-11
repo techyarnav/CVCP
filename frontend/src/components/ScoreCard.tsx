@@ -4,21 +4,23 @@ import { Card } from '@/components/ui/card';
 interface ScoreCardProps {
   title: string;
   score: number;
-  maxScore: number;
-  weight: number;
+  maxScore?: number;
+  weight?: number;
   icon: React.ReactNode;
   delay?: number;
+  showPercentage?: boolean;
 }
 
 const ScoreCard: React.FC<ScoreCardProps> = ({ 
   title, 
   score, 
-  maxScore, 
+  maxScore = 200, 
   weight, 
   icon, 
-  delay = 0 
+  delay = 0,
+  showPercentage = true
 }) => {
-  const percentage = (score / maxScore) * 100;
+  const percentage = maxScore ? (score / maxScore) * 100 : 0;
 
   return (
     <Card 
@@ -32,32 +34,34 @@ const ScoreCard: React.FC<ScoreCardProps> = ({
           </div>
           <div>
             <h3 className="font-semibold text-card-foreground">{title}</h3>
-            <p className="text-sm text-muted-foreground">{weight}% weight</p>
+            {weight && <p className="text-sm text-muted-foreground">{weight}% weight</p>}
           </div>
         </div>
         <div className="text-right">
           <div className="text-2xl font-bold gradient-text animate-count-up">
             {score}
           </div>
-          <div className="text-sm text-muted-foreground">/ {maxScore}</div>
+          {maxScore && <div className="text-sm text-muted-foreground">/ {maxScore}</div>}
         </div>
       </div>
       
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">Progress</span>
-          <span className="text-card-foreground font-medium">{Math.round(percentage)}%</span>
+      {showPercentage && (
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">Progress</span>
+            <span className="text-card-foreground font-medium">{Math.round(percentage)}%</span>
+          </div>
+          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+            <div 
+              className="h-full bg-gradient-primary transition-all duration-1000 ease-out rounded-full"
+              style={{ 
+                width: `${percentage}%`,
+                animationDelay: `${delay + 0.5}s`
+              }}
+            />
+          </div>
         </div>
-        <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-          <div 
-            className="h-full bg-gradient-primary transition-all duration-1000 ease-out rounded-full"
-            style={{ 
-              width: `${percentage}%`,
-              animationDelay: `${delay + 0.5}s`
-            }}
-          />
-        </div>
-      </div>
+      )}
     </Card>
   );
 };
