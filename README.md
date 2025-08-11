@@ -136,8 +136,6 @@ sequenceDiagram
   end
 ```
 
-<img src="assets/calculate_score_sequence_diagram.png" alt="Calculate Score Sequence Diagram"/>
-<br/>
 
 ### .env example (backend and optional frontend)
 
